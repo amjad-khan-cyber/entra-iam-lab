@@ -1,0 +1,20 @@
+# Data exports and logs (contain the tenant domain and user details)
+*.csv
+*.log
+jml-log.csv
+
+# Certificates and keys
+*.cer
+*.pfx
+*.pem
+*.key
+
+# Private notes (never public)
+Interview_Lines.md
+PIM_At_Work_Writeup.md
+*Brag*
+*Skills_Inventory*
+
+# Raw tokens and API dumps
+*saml-response*
+*.json.bak
