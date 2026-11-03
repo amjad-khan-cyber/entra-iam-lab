@@ -1,4 +1,4 @@
-# Entra ID IAM Lab: Conditional Access, Passkeys, PIM and Graph Automation
+# Hands-on Microsoft Entra ID lab: Conditional Access, passkeys, PIM, access reviews and PowerShell/Graph automation
 
 I work in IT support and handle joiner/mover/leaver requests in Adaxes at my job. I built this lab to practice the parts of IAM I don't get to do much at work, mainly access reviews, finding access problems, and automating the user lifecycle.
 
