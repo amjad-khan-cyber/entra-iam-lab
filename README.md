@@ -13,7 +13,7 @@ I used AI to help write the scripts. My part was designing how they should work,
 - **PIM:** no account has standing User Admin, Helpdesk or Global Admin except my daily admin and the break-glass account. Global Admin needs a second person to approve, and activating any of the three roles needs a fresh passkey.
 - **Found a real risk:** testing a policy showed a personal Microsoft account still held Global Administrator, and the tenant couldn't see how it did MFA. Removed the role and kept the audit log as evidence.
 - **PowerShell and Microsoft Graph:** scripts that export user access, flag access risks (disabled users with access, wrong department, segregation of duties, missing data) and handle joiners, movers and leavers from an HR feed with a preview mode and a log.
-- **Access reviews (in progress):** quarterly review where each person's manager reviews them and a fallback reviewer covers the manager, so nobody reviews their own access.
+- **Access reviews:** quarterly review where each person's manager reviews them and a fallback reviewer covers the manager, so nobody reviews their own access. Together with my scripts, it took the access-risk findings to 0.
 
 ![PIM: Helpdesk Administrator changed from permanent to eligible](screenshots/pim-helpdesk-eligible.png)
 
@@ -174,6 +174,10 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 
 **What I've fixed so far:** I gave svc-backup an owner by setting Ethan (IT) as its manager and took it out of IT-Admins. That dropped it to 3 findings. I'm leaving Sofia, James, and Aisha for now so I can clean them up through an actual Entra access review with Daniel as the reviewer, then rerun the script to confirm it's at 0.
 
+**Step 6, the access review (Nov 1 to 2):** the Graph scripts first gave a fresh baseline of 4 findings: Sofia, James, Aisha, and a new one, a hand-made PIM test account with no department, created outside the JML process. I deleted that account with Graph (preview with -WhatIf first). Then I ran a quarterly Entra access review on Finance-Share, AP-Vendor-Create and AP-Payment-Approve, with each person's manager as reviewer and my admin account as fallback, so Daniel's own access was reviewed by someone else. Daniel denied Sofia and James on Finance-Share and Aisha on AP-Payment-Approve (she keeps AP-Vendor-Create), each with a reason. After the review was stopped, auto-apply removed them, though it took several hours. Find-AccessRisks.ps1 now reports **No findings** across 16 users.
+
+![Find-AccessRisks.ps1: no findings after the access review](screenshots/findings-zero.png)
+
 ## Things I ran into
 
 - My first export gave 16 rows when I expected 17. I'd forgotten to add Aisha to Finance-Share. Now I check the count against what I expect instead of assuming the setup is right.
@@ -204,6 +208,9 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 - **Expired assignments was empty after an activation ended:** That tab lists eligibilities that ended, not activations. Ethan's eligibility was still valid; only his 1-hour activation ended.
 - **Two audit fields misled me at first:** On the denied request, "Requestor" was my admin account (the one that performed the denial) and "Status: Succeeded" meant the denial succeeded. The Action line says what actually happened.
 - **No passkey prompt on one activation:** Ethan had just signed in with a passkey, so CA006 didn't prompt again. "Every time" allows five minutes of clock skew. Signing in with push first forces the prompt.
+- **The reviewer recommendations said Deny for almost everyone:** the "inactive user" helper flags anyone without a sign-in in 30 days, which is every test account. Accepting the recommendations would have removed access from people who need it. Daniel overrode them with reasons; recommendations are hints, not decisions.
+- **Completed isn't applied:** the review showed Completed while Sofia and James were still in Finance-Share and the Apply result column was empty. Auto-apply did remove them, but hours later. I checked group membership and reran the risk script instead of trusting the status.
+- **Stop is on the review instance, not the series:** a recurring review's Overview only offers Delete series. Stop is under Current, Results. After stopping, the Current section goes grey and the finished review moves to Review history.
 - **Admin view vs user view:** The admin "Add authentication method" panel on Priya's account still offers Phone number, but Priya's own Security info doesn't. Admins can store a phone number on a user; the methods policy decides whether the user can use it.
 
 ## Things I learned
@@ -248,6 +255,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Full export: `screenshots/Export-Output.png`
 - 5 findings before any fixes: `screenshots/findings-before.png`
 - 3 findings after fixing the service account: `screenshots/findings-after-svc-fix.png`
+- No findings after the access review: `screenshots/findings-zero.png`
 - My missing department rule catching the admin account: `screenshots/findings-rule6-missing-department.png`
 - JML preview: `screenshots/jml-preview.png`
 - JML applied: `screenshots/jml-applied.png`
@@ -278,8 +286,9 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] Fix the accented name bug
 - [x] Move finished HR feed rows to a processed file automatically
 - [ ] Skip steps that are already done (like disabling an account that's already disabled) so reruns don't repeat work
-- [x] Start the Entra ID P2 trial and run an access review on Finance-Share and the AP groups (Nov 1: reviewers are each user's manager, admin@ as fallback so nobody reviews themselves; waiting on the denied access to be removed)
-- [ ] Rerun Find-AccessRisks.ps1 after the review and get to 0 findings
+- [x] Start the Entra ID P2 trial and run an access review on Finance-Share and the AP groups (Nov 1: reviewers are each user's manager, admin@ as fallback so nobody reviews themselves; denied access removed by auto-apply)
+- [x] Rerun Find-AccessRisks.ps1 after the review and get to 0 findings (Nov 3: No findings, 16 users)
+- [ ] Access package "New Finance Analyst" with approval and expiry (Step 6.5)
 - [x] Set up PIM so admin roles are only active when needed (User Admin, Helpdesk, Global Admin with approval)
 - [x] Add Conditional Access and MFA policies (CA001 On, CA002 to CA005 report-only)
 - [x] Scope passkeys to a pilot group, onboard users with TAP, require phishing-resistant MFA for admins (report-only)
