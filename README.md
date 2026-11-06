@@ -13,7 +13,7 @@ I used AI to help write the scripts. My part was designing how they should work,
 - **PIM:** no account has standing User Admin, Helpdesk or Global Admin except my daily admin and the break-glass account. Global Admin needs a second person to approve, and activating any of the three roles needs a fresh passkey.
 - **Found a real risk:** testing a policy showed a personal Microsoft account still held Global Administrator, and the tenant couldn't see how it did MFA. Removed the role and kept the audit log as evidence.
 - **PowerShell and Microsoft Graph:** scripts that export user access, flag access risks (disabled users with access, wrong department, segregation of duties, missing data) and handle joiners, movers and leavers from an HR feed with a preview mode and a log.
-- **Access reviews:** quarterly review where each person's manager reviews them and a fallback reviewer covers the manager, so nobody reviews their own access. Together with my scripts, it took the access-risk findings to 0.
+- **Access reviews:** quarterly review where each person's manager reviews them and a fallback reviewer covers the manager, so nobody reviews their own access. Together with my scripts, it took the access-risk findings to 0. New requested access now goes through an access package with manager approval, a 90-day expiry and a segregation-of-duties block.
 
 ![PIM: Helpdesk Administrator changed from permanent to eligible](screenshots/pim-helpdesk-eligible.png)
 
@@ -100,6 +100,31 @@ Activation alerts for all three go to an inbox I read, in addition to the defaul
 ![Global Admin request approved after verifying with the requester](screenshots/pim-ga-request-approved.png)
 
 Result: no account has standing Helpdesk, User Administrator or Global Admin except admin@ and break-glass, and becoming an admin takes a fresh passkey, a reason, and for Global Admin a second person.
+
+## Access package (Step 6)
+
+The access review cleaned up old access. An access package controls new access, so the same problems don't come back.
+
+| Setting | Choice | Why |
+|---|---|---|
+| Catalog | Finance | Groups the department's requestable resources, so Finance can be delegated to manage its own access later |
+| Package | New Finance Analyst: AP-Vendor-Create and the Finance Team Microsoft 365 group, both as Member | Requested access only. Finance-Share stays birthright, given by the JML script |
+| Who can get it | DYN-Finance-Users | Only current Finance staff can see it. The dynamic group keeps that list up to date on its own |
+| Who can request | Self (admins can always assign) | Requesting on someone else's behalf needs an Entra ID Governance license |
+| Approval | Requester's manager, my admin account as fallback, 3 days, justification required from both sides | The business decides, not IT, and the manager's own requests still have an approver |
+| Requester question | "Which vendors will you be setting up?" | Gives the approver something specific to judge |
+| Expiry | 90 days, extension allowed with approval | Access ends by default. An extension is a small review built in |
+| Separation of duties | AP-Payment-Approve is incompatible | Anyone who can approve payments can't request vendor-creation access |
+
+**Tests:**
+
+- **Request and approval:** Priya (Finance) requested it, Daniel approved it, and the assignment shows Delivered with an end date of Feb 3, 2027.
+- **SoD block:** Daniel can see the package but can't request it: "You cannot request access as you currently have incompatible group membership(s)", pointing to AP-Payment-Approve. The block happens before any approval.
+- **Scope:** Ethan (IT) sees "No access packages available".
+
+This only governs access given through the package. Someone could still be added to AP-Vendor-Create by hand, which is why Find-AccessRisks.ps1 keeps its segregation-of-duties rule: prevent what you can, detect what gets around it.
+
+![Daniel blocked by the separation-of-duties rule](screenshots/access-package-sod-blocked-daniel.png)
 
 ## Scripts
 
@@ -211,6 +236,8 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 - **The reviewer recommendations said Deny for almost everyone:** the "inactive user" helper flags anyone without a sign-in in 30 days, which is every test account. Accepting the recommendations would have removed access from people who need it. Daniel overrode them with reasons; recommendations are hints, not decisions.
 - **Completed isn't applied:** the review showed Completed while Sofia and James were still in Finance-Share and the Apply result column was empty. Auto-apply did remove them, but hours later. I checked group membership and reran the risk script instead of trusting the status.
 - **Stop is on the review instance, not the series:** a recurring review's Overview only offers Delete series. Stop is under Current, Results. After stopping, the Current section goes grey and the finished review moves to Review history.
+- **Selected isn't added:** when adding resources to the catalog, both groups showed as Selected; they're only in the catalog after clicking Add.
+- **Some request options need a different license:** requesting on someone's behalf, sponsors as approvers and Verified ID all need Entra ID Governance, which the E5 trial (Entra ID P2) doesn't include.
 - **Admin view vs user view:** The admin "Add authentication method" panel on Priya's account still offers Phone number, but Priya's own Security info doesn't. Admins can store a phone number on a user; the methods policy decides whether the user can use it.
 
 ## Things I learned
@@ -278,6 +305,12 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Global Admin request approved and activated: `screenshots/pim-ga-request-approved.png`
 - Helpdesk eligible: password reset refused, then allowed after activation: `screenshots/pim-helpdesk-eligible.png`
 
+**Access package (Step 6)**
+- Priya's assignment: Delivered, ends Feb 3, 2027: `screenshots/access-package-assignment-priya.png`
+- The same assignment in Priya's My Access: `screenshots/access-package-myaccess-priya.png`
+- Daniel blocked by the separation-of-duties rule: `screenshots/access-package-sod-blocked-daniel.png`
+- Ethan (IT) can't see the package: `screenshots/access-package-hidden-ethan.png`
+
 **Not captured yet:** screenshots for the app permissions, consent, SAML, managed identity, Azure RBAC, licensing, group and CA006 labs. I'll recapture the ones that still exist before the E5 trial ends on Nov 23.
 
 ## Next
@@ -288,7 +321,8 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [ ] Skip steps that are already done (like disabling an account that's already disabled) so reruns don't repeat work
 - [x] Start the Entra ID P2 trial and run an access review on Finance-Share and the AP groups (Nov 1: reviewers are each user's manager, admin@ as fallback so nobody reviews themselves; denied access removed by auto-apply)
 - [x] Rerun Find-AccessRisks.ps1 after the review and get to 0 findings (Nov 3: No findings, 16 users)
-- [ ] Access package "New Finance Analyst" with approval and expiry (Step 6.5)
+- [x] Access package "New Finance Analyst" with manager approval, 90-day expiry and an SoD block (Nov 5)
+- [ ] Make Daniel an access package manager for the Finance catalog (delegation)
 - [x] Set up PIM so admin roles are only active when needed (User Admin, Helpdesk, Global Admin with approval)
 - [x] Add Conditional Access and MFA policies (CA001 On, CA002 to CA005 report-only)
 - [x] Scope passkeys to a pilot group, onboard users with TAP, require phishing-resistant MFA for admins (report-only)
