@@ -13,6 +13,7 @@ I used AI to help write the scripts. My part was designing how they should work,
 - **PIM:** no account has standing User Admin, Helpdesk or Global Admin except my daily admin and the break-glass account. Global Admin needs a second person to approve, and activating any of the three roles needs a fresh passkey.
 - **Found a real risk:** testing a policy showed a personal Microsoft account still held Global Administrator, and the tenant couldn't see how it did MFA. Removed the role and kept the audit log as evidence.
 - **PowerShell and Microsoft Graph:** scripts that export user access, flag access risks (disabled users with access, wrong department, segregation of duties, missing data) and handle joiners, movers and leavers from an HR feed with a preview mode and a log.
+- **Lifecycle workflows:** a Finance pre-hire workflow that adds birthright access and emails the manager a Temporary Access Pass before the start date, with no ticket and no copying from a coworker.
 - **Access reviews:** quarterly review where each person's manager reviews them and a fallback reviewer covers the manager, so nobody reviews their own access. Together with my scripts, it took the access-risk findings to 0. New requested access now goes through an access package with manager approval, a 90-day expiry and a segregation-of-duties block.
 
 ![PIM: Helpdesk Administrator changed from permanent to eligible](screenshots/pim-helpdesk-eligible.png)
@@ -126,6 +127,25 @@ This only governs access given through the package. Someone could still be added
 
 ![Daniel blocked by the separation-of-duties rule](screenshots/access-package-sod-blocked-daniel.png)
 
+## Lifecycle workflow (Step 7)
+
+The cloud version of the Join step in Invoke-JML.ps1, run by Entra on a schedule. Needs Microsoft Entra ID Governance (started the trial and licensed 11 users through a dedicated LIC-ID-Governance group, assigned in the Microsoft 365 admin center).
+
+| Part | Setting | Why |
+|---|---|---|
+| Template | Onboard pre-hire employee (category Joiner) | Runs before the start date |
+| Trigger | Within 7 days before employeeHireDate. Rule: `employeeHireDate ge system.now and employeeHireDate le (system.now plus P7D)` | The default "Equal to 7 days" only fires on that exact day, so a hire entered late never gets onboarded |
+| Scope | `(department eq 'Finance')` | Users with no hire date are in scope but never triggered |
+| Task 1 | Add to Finance-Share | Birthright access, given automatically |
+| Task 2 | Generate a Temporary Access Pass and email it to the manager (one-time use, 8 hours) | Passwordless first sign-in; the access task runs first so it doesn't depend on the email |
+| Schedule | Enabled | Without it the workflow only runs on demand |
+
+**Test:** created Hannah Lee (Finance, hire date Nov 12, manager Daniel Kim). What If showed Hannah as the only user in scope with 0 potential task failures; the simulation predicted both tasks would complete. Run on demand: 1 user processed, 0 failed, Hannah added to Finance-Share, and Daniel received the TAP email.
+
+**What it caught:** the TAP started at the hire date, 05:00 UTC (midnight in New Jersey), and expired at 13:00 UTC (8:00 AM local), an hour before a 9 AM start. The workflow reported success while the new hire would still have been locked out. Fixes: raise the tenant's TAP maximum lifetime, have HR send a start time with the hire date, or generate the TAP in a day-1 workflow instead.
+
+![Lifecycle workflow run for Hannah: both tasks completed](screenshots/lcw-workflow-history-hannah.png)
+
 ## Scripts
 
 ### 1. Export-UserGroupMembership.ps1
@@ -238,6 +258,9 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 - **Stop is on the review instance, not the series:** a recurring review's Overview only offers Delete series. Stop is under Current, Results. After stopping, the Current section goes grey and the finished review moves to Review history.
 - **Selected isn't added:** when adding resources to the catalog, both groups showed as Selected; they're only in the catalog after clicking Add.
 - **Some request options need a different license:** requesting on someone's behalf, sponsors as approvers and Verified ID all need Entra ID Governance, which the E5 trial (Entra ID P2) doesn't include.
+- **Silent failures in the lifecycle workflow:** I typed the scope value as "Finanace", which would have matched nobody with no error; the template's default trigger (Equal to 7 days) would have skipped a hire starting in 3 days; and "Enable schedule" was off by default. What If caught the scope and the trigger before anything ran.
+- **Simulation says Completed too:** the What If simulation showed both tasks Completed while nothing had changed. Only the run-on-demand history and the group membership proved it.
+- **Group licenses moved:** the Entra admin center now only shows group license assignments; adding them is done in the Microsoft 365 admin center.
 - **Admin view vs user view:** The admin "Add authentication method" panel on Priya's account still offers Phone number, but Priya's own Security info doesn't. Admins can store a phone number on a user; the methods policy decides whether the user can use it.
 
 ## Things I learned
@@ -305,6 +328,10 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Global Admin request approved and activated: `screenshots/pim-ga-request-approved.png`
 - Helpdesk eligible: password reset refused, then allowed after activation: `screenshots/pim-helpdesk-eligible.png`
 
+**Lifecycle workflow (Step 7)**
+- Workflow history: Hannah processed, both tasks completed: `screenshots/lcw-workflow-history-hannah.png`
+- TAP email to the manager (code hidden): `screenshots/lcw-tap-email-to-manager.png`
+
 **Access package (Step 6)**
 - Priya's assignment: Delivered, ends Feb 3, 2027: `screenshots/access-package-assignment-priya.png`
 - The same assignment in Priya's My Access: `screenshots/access-package-myaccess-priya.png`
@@ -323,6 +350,10 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] Rerun Find-AccessRisks.ps1 after the review and get to 0 findings (Nov 3: No findings, 16 users)
 - [x] Access package "New Finance Analyst" with manager approval, 90-day expiry and an SoD block (Nov 5)
 - [ ] Make Daniel an access package manager for the Finance catalog (delegation)
+- [x] Lifecycle workflow: Finance pre-hire onboarding with birthright group and TAP to manager (Nov 9)
+- [ ] Fix the TAP window: raise the tenant TAP maximum or move TAP generation to a day-1 workflow
+- [ ] Leaver workflow (disable, revoke sessions, remove groups) to match the Leave step in Invoke-JML.ps1
+- [x] Create a dedicated licensing group (LIC-ID-Governance) and use group-based licensing
 - [x] Set up PIM so admin roles are only active when needed (User Admin, Helpdesk, Global Admin with approval)
 - [x] Add Conditional Access and MFA policies (CA001 On, CA002 to CA005 report-only)
 - [x] Scope passkeys to a pilot group, onboard users with TAP, require phishing-resistant MFA for admins (report-only)
@@ -347,7 +378,6 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] Create a dynamic group, a role-assignable group and a Microsoft 365 group
 - [ ] Fix Invoke-JML.ps1 so Join sets UsageLocation
 - [ ] Update all Microsoft Graph PowerShell modules to the same version
-- [ ] Create a dedicated licensing group and move to group-based licensing
 - [ ] Scope Helpdesk Administrator to an administrative unit instead of the whole directory
 - [x] Make Helpdesk Administrator eligible in PIM instead of permanently active
 - [x] Create a break-glass emergency admin account (bg-emergency01), sign in once and register MFA
