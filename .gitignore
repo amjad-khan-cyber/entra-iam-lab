@@ -18,3 +18,6 @@ PIM_At_Work_Writeup.md
 # Raw tokens and API dumps
 *saml-response*
 *.json.bak
+
+# Sample input for the Step 8 scripts (fake names)
+!new-hires.csv

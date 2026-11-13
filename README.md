@@ -30,7 +30,7 @@ I used AI to help write the scripts. My part was designing how they should work,
 - A few problems set up on purpose so the scripts have something to find
 - Three apps in Entra for the permissions and SSO labs: Lab-App-01 (an app I registered), Microsoft Entra SAML Toolkit (a gallery app set up for SAML SSO), and Microsoft Graph Command Line Tools (what my PowerShell scripts sign in through)
 - Two admin accounts: a native cloud-only admin (admin@<tenant>.onmicrosoft.com) with passkeys that I use for all lab work, and a break-glass account. My original account (the personal Microsoft account that created the tenant) no longer has any Entra role
-- Conditional Access policies CA001 to CA006 and passkeys rolled out to a pilot group (see Conditional Access and authentication below)
+- Conditional Access policies CA001 to CA007 and passkeys rolled out to a pilot group (see Conditional Access and authentication below)
 - PIM for User Administrator, Helpdesk Administrator and Global Administrator; Ethan Brooks has no standing admin roles (see Privileged Identity Management below)
 - An Azure subscription with a $5 monthly budget alert, a resource group (rg-iam-lab), and a user-assigned managed identity (mi-jml-automation) that has no permissions yet
 
@@ -58,8 +58,17 @@ Full design, What If results and rollout plan: `CA_Policy_Design.md`.
 | CA004-Block-Selected-Countries | All users | Block named high-risk countries | On (Oct 29) |
 | CA005-Require-PhishResistant-Admins | 7 admin roles | Phishing-resistant MFA authentication strength | Report-only |
 | CA006-PIM-Activation-PhishResistant | All users, only when authentication context c1 (PIM Role Activation) is requested | Phishing-resistant MFA, sign-in frequency every time | On |
+| CA007-Block-DeviceCodeFlow | All users, all resources, only sign-ins using device code flow | Block | On (Nov 12) |
 
-Break-glass is excluded by name from all six. When turning policies On, the portal offered to exclude my own admin account; I declined, since break-glass is the safety net and an excluded daily admin would be the weakest point. Security defaults were turned off in the same sitting CA001 was turned on.
+Break-glass is excluded by name from all seven. When turning policies On, the portal offered to exclude my own admin account; I declined, since break-glass is the safety net and an excluded daily admin would be the weakest point. Security defaults were turned off in the same sitting CA001 was turned on.
+
+**Device code flow (CA007, Step 9):** device code sign-in is meant for devices without a keyboard or browser, like conference room screens or a CLI on a server: the device shows a code, the user enters it at microsoft.com/devicelogin on another device, and the token goes to the device that started the flow. That's also the attack: someone starts the flow, sends the code in a phishing email, and the victim signs in on the real Microsoft page with real MFA while the attacker's device gets the token. Security defaults are off in this tenant and no policy blocked it, so I tested it first.
+
+- **Before:** Ethan signed in to Graph from PowerShell with `Connect-EntraService -ClientID Graph -DeviceCode`. The sign-in log showed Original transfer method "Device code flow", a 50199 entry (Microsoft's "are you trying to sign in?" confirmation) and then Success, tied together by the same Correlation ID.
+- **After:** CA007 blocks the device code flow condition for all users and all resources, break-glass excluded. The same sign-in got "You don't have access to this", error 53003 ("does not allow token issuance"), with CA007 as the failing policy and CA001 as Success, so it was blocked for the flow, not for bad MFA.
+- I turned it straight On because nothing in the lab uses device code. At work I'd run it report-only first and look for Teams Rooms or scripts that depend on it, then exclude those accounts.
+
+![CA007: device code sign-in allowed before, blocked with 53003 after](screenshots/ca007-device-code-before-after.png)
 
 **Authentication methods (Step 4):**
 
@@ -206,6 +215,37 @@ Priya's move is the one I care about most. At my job, when someone changes roles
 
 **Tyler vs James:** Both are disabled, but James was disabled by hand earlier and is still in Finance-Share, never had his sessions revoked, and has no record of what was done. Tyler went through the script and has no groups left, plus every step is in the log. Find-AccessRisks.ps1 still flags James but not Tyler. That's the whole argument for automating offboarding, steps get missed when it's done by hand.
 
+### 4. New-LabUsername.ps1 (Step 8)
+
+A function that turns a full name into a username: first initial plus last name, lowercase, with accents converted to plain letters and a number added when the name is already taken.
+
+| Input | Output |
+|---|---|
+| Amjad Khan | akhan |
+| Amjad Khan, with akhan taken | akhan2 |
+| Amjad Khan, with akhan and akhan2 taken | akhan3 |
+| Mary Ann Smith | msmith (the last word is used as the surname) |
+| "  Amjad   Khan  " | akhan (extra spaces handled) |
+| José Díaz | jdiaz |
+
+Run on a CSV of 11 new hires, it also has to handle two people with the same name in one batch: each new username is added to the taken list as it's handed out, so the second Omar Haddad got ohaddad2. Rows with no department are skipped, so no username is made for someone who couldn't be onboarded anyway.
+
+```powershell
+. .\New-LabUsername.ps1
+$taken = @('akhan')
+Import-Csv .\new-hires.csv | Where-Object { $_.Department } | ForEach-Object {
+    $u = New-LabUsername -FullName "$($_.FirstName) $($_.LastName)" -Existing $taken
+    $taken += $u
+    $_ | Select-Object FirstName, LastName, Department, @{Name='Username'; Expression={$u}}
+}
+```
+
+Limits I'd fix before production: the taken list should come from Graph instead of being typed in, multi-word surnames ("de la Cruz") need separate first and last name fields from HR, and this format (akhan) doesn't match the first.last format Invoke-JML.ps1 uses, so one tenant would end up with two naming standards.
+
+### 5. Filter-FinanceHires.ps1 (Step 8)
+
+Filters new-hires.csv to Finance, adds a StartDate column with a calculated property, and exports finance-hires.csv. It warns about rows with no department first (Samira in the sample file) instead of letting them disappear quietly.
+
 ## What the scripts found
 
 I set up these problems on purpose:
@@ -261,6 +301,8 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 - **Silent failures in the lifecycle workflow:** I typed the scope value as "Finanace", which would have matched nobody with no error; the template's default trigger (Equal to 7 days) would have skipped a hire starting in 3 days; and "Enable schedule" was off by default. What If caught the scope and the trigger before anything ran.
 - **Simulation says Completed too:** the What If simulation showed both tasks Completed while nothing had changed. Only the run-on-demand history and the group membership proved it.
 - **Group licenses moved:** the Entra admin center now only shows group license assignments; adding them is done in the Microsoft 365 admin center.
+- **"Not recognized" three different ways:** the first time I called New-LabUsername I was in Windows PowerShell 5.1, the file had been created in my home folder instead of the repo, and Notepad had saved it empty. Dot-sourcing an empty file gives no error. Now I check the folder, the shell version and Get-Content before loading anything.
+- **A "Failure" that wasn't a block:** the first device code sign-in logged a Failure with error 50199 ten seconds before the Success. 50199 is the "are you trying to sign in?" confirmation, not a block. A real Conditional Access block is 53003. Same Correlation ID means it's one sign-in.
 - **Admin view vs user view:** The admin "Add authentication method" panel on Priya's account still offers Phone number, but Priya's own Security info doesn't. Admins can store a phone number on a user; the methods policy decides whether the user can use it.
 
 ## Things I learned
@@ -321,6 +363,9 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Admin can store a phone, user can't use it: `screenshots/sms-admin-vs-user.png`
 - CA005 for Ethan, User action required vs Success: `screenshots/ca005-before-after-ethan.png`
 
+**Graph authentication (Step 9)**
+- CA007: device code sign-in allowed before, blocked with 53003 after: `screenshots/ca007-device-code-before-after.png`
+
 **PIM (Step 5)**
 - User Administrator eligible: user creation failed, then succeeded after activation: `screenshots/pim-user-admin-before-after.png`
 - Ethan's My roles showing Activated (User Admin) vs Assigned/Permanent (Helpdesk, before it was moved to eligible): `screenshots/pim-activated-vs-assigned.png`
@@ -364,7 +409,8 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [ ] Turn off self-service password reset for admins (Graph authorization policy allowedToUseSSPR) and test on Ethan
 - [ ] Passkey profile for admins: device-bound only with attestation enforced
 - [ ] Clean up stored phone numbers on accounts so they can't come back if SMS is re-enabled
-- [ ] Download the JSON for CA001 to CA006 into the repo
+- [x] Block device code flow with Conditional Access and test before and after (CA007, Nov 12)
+- [ ] Download the JSON for CA001 to CA007 into the repo
 - [ ] Recapture the missing screenshots (permissions, SAML, managed identity, RBAC, licensing, groups, CA006) before Nov 23
 - [ ] Use an approver group instead of one person for Global Admin
 - [ ] Require ticket information on Global Admin activation
