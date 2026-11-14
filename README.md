@@ -189,6 +189,13 @@ Worked through PDQ's "Microsoft Graph Authentication Made Simple, Part 1: Delega
 
 ![Own app registration: write scopes gone, write denied for Global Admin, unassigned user refused](screenshots/app-registration-least-privilege.png)
 
+**User consent settings:** the tenant was on "Let Microsoft manage your consent settings" with user consent for popular mail clients turned on. I made it explicit, same reasoning as the Authenticator settings:
+
+- **Permission classifications (Low):** openid, profile, email, offline_access and User.Read. They only describe the signed-in user. Entra only allows delegated permissions that don't need admin consent here, so directory-wide permissions like User.Read.All can't be marked low.
+- **User consent:** "Allow user consent for apps from verified publishers, for selected permissions". A consent phishing app asking for Mail.Read now fails twice: unverified publisher, and the permission isn't classified low.
+- **Admin consent workflow:** on, with admin@ as reviewer, email notifications and reminders, requests expire after 30 days. Users who hit a blocked app get a request button instead of a dead end. At work the reviewers would be a group or role, not one person.
+- **Not tested yet:** a user requesting a permission outside the list and the request reaching the reviewer.
+
 ## Scripts
 
 ### 1. Export-UserGroupMembership.ps1
@@ -224,6 +231,8 @@ It runs in preview mode by default and only shows what it would do. It only make
 
 **Handling the HR feed:** After a real run, rows that finished get moved to hr-feed-processed.csv with the date. Rows that failed or had bad data (user not found, department not in the rules, unknown action) stay in hr-feed.csv so a person can fix them and run it again. Preview mode never touches the files. I started out doing this by hand and had the script do it once I saw how easy it was to forget.
 
+**Current feed columns:** `Action,DisplayName,Department,JobTitle,Manager,StartDate`
+
 **First test feed:**
 
 ```
@@ -248,6 +257,13 @@ Priya's move is the one I care about most. At my job, when someone changes roles
 **Second test:** Added José Díaz as a new hire to test my fix for accented names (see below). He came out as jose.diaz, got Marcus as his manager and Sales-Share, and his row moved to the processed file on its own.
 
 **Tyler vs James:** Both are disabled, but James was disabled by hand earlier and is still in Finance-Share, never had his sessions revoked, and has no record of what was done. Tyler went through the script and has no groups left, plus every step is in the log. Find-AccessRisks.ps1 still flags James but not Tyler. That's the whole argument for automating offboarding, steps get missed when it's done by hand.
+
+**Step 9 upgrades (Nov 13):**
+
+- **Usage location:** a Graph query showed every portal-created user had UsageLocation US, but Tyler and James (created by the script) were blank. Licenses can't be assigned without it, so the next joiner added to a licensing group would have failed with no warning. None were in a licensing group yet (LIC-ID-Governance showed 0 errors), so I fixed the script before it hurt anyone: New-MgUser now sets `-UsageLocation 'US'`.
+- **Hire date:** the feed has a StartDate column and the Join step sets `employeeHireDate`, so new joiners trigger the Step 7 pre-hire workflow. Before this, script-created users had no hire date and the workflow would never pick them up. Writing the hire date needs `User-LifeCycleInfo.ReadWrite.All`, which User.ReadWrite.All doesn't cover.
+- **Scope check before any change:** the script now compares the scopes in the current token with the four it needs and stops with "Missing Graph scopes: ..." before touching a user, instead of creating the account and failing halfway with a 403. Tested: a session without the lifecycle scope was stopped at the check.
+- **Test:** Nadia Rahim (Finance, start 2026-11-20). Preview showed create, hire date, manager, Finance-Share; after `-Apply`, Graph showed UsageLocation US and employeeHireDate 11/20/2026 5:00 AM. Midnight New Jersey time is stored as 05:00 UTC, the same cause as the TAP window finding in Step 7.
 
 ### 4. New-LabUsername.ps1 (Step 8)
 
@@ -448,8 +464,13 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [ ] Clean up stored phone numbers on accounts so they can't come back if SMS is re-enabled
 - [x] Block device code flow with Conditional Access and test before and after (CA007, Nov 12)
 - [x] Read-only app registration for report scripts, Assignment required, tested with a denied write and an unassigned user (Nov 13)
+- [x] Invoke-JML: UsageLocation on new users, hire date from the feed, scope check before any change (Nov 13)
+- [ ] Invoke-JML: match joiners on an HR EmployeeId instead of display name, and build usernames with New-LabUsername checked against Graph
+- [ ] Standalone leaver script with a timestamped log
+- [ ] Confirm the lifecycle workflow picked up Nadia Rahim and emailed Daniel a TAP
 - [ ] Switch Export-UserGroupMembership.ps1 and Find-AccessRisks.ps1 to sign in through Lab-PowerShell-Reports
-- [ ] Review the tenant's user consent settings and permission classifications
+- [x] User consent limited to verified publishers and 5 low-risk permissions, admin consent workflow on (Nov 13)
+- [ ] Test the admin consent workflow: a user requests a blocked permission and admin@ approves or denies it
 - [ ] Application permissions with a certificate for unattended jobs (Part 2 of the PDQ series)
 - [ ] Download the JSON for CA001 to CA007 into the repo
 - [ ] Recapture the missing screenshots (permissions, SAML, managed identity, RBAC, licensing, groups, CA006) before Nov 23

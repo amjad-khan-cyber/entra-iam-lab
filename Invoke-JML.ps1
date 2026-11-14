@@ -6,8 +6,8 @@
 .NOTES
     Modules:     Microsoft.Graph.Authentication, Microsoft.Graph.Users,
                  Microsoft.Graph.Groups, Microsoft.Graph.Users.Actions
-    Permissions: User.ReadWrite.All, GroupMember.ReadWrite.All, User.RevokeSessions.All
-    Connect:     Connect-MgGraph -TenantId <tenant>.onmicrosoft.com -Scopes "User.ReadWrite.All","GroupMember.ReadWrite.All","User.RevokeSessions.All"
+    Permissions: User.ReadWrite.All, GroupMember.ReadWrite.All, User.RevokeSessions.All, User-LifeCycleInfo.ReadWrite.All
+    Connect:     Connect-MgGraph -TenantId <tenant>.onmicrosoft.com -Scopes "User.ReadWrite.All","GroupMember.ReadWrite.All","User.RevokeSessions.All","User-LifeCycleInfo.ReadWrite.All"
     Preview:     .\Invoke-JML.ps1 -Domain <tenant>.onmicrosoft.com
     Apply:       .\Invoke-JML.ps1 -Domain <tenant>.onmicrosoft.com -Apply
 #>
@@ -22,6 +22,9 @@ param(
 )
 
 if (-not (Get-MgContext)) { Write-Error "Not connected to Microsoft Graph. Run Connect-MgGraph first."; return }
+$required = 'User.ReadWrite.All','GroupMember.ReadWrite.All','User.RevokeSessions.All','User-LifeCycleInfo.ReadWrite.All'
+$missing  = $required | Where-Object { (Get-MgContext).Scopes -notcontains $_ }
+if ($missing) { Write-Error "Missing Graph scopes: $($missing -join ', '). Reconnect with Connect-MgGraph -Scopes ..."; return }
 if (-not (Test-Path $FeedPath)) { Write-Error "HR feed not found: $FeedPath"; return }
 
 $mode = if ($Apply) { 'APPLIED' } else { 'PREVIEW' }
@@ -116,9 +119,14 @@ foreach ($row in $feed) {
                 if (Confirm-Step 'Join' $name "Create account $upn ($($row.Department), $($row.JobTitle))") {
                     $password = (-join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | ForEach-Object { [char]$_ })) + 'Aa1!'
                     $newUser = New-MgUser -DisplayName $name -UserPrincipalName $upn -MailNickname $nickname `
-                        -AccountEnabled:$true -Department $row.Department -JobTitle $row.JobTitle `
+                        -AccountEnabled:$true -Department $row.Department -JobTitle $row.JobTitle -UsageLocation 'US' `
                         -PasswordProfile @{ Password = $password; ForceChangePasswordNextSignIn = $true }
                     Start-Sleep -Seconds 10   # give the new account time to be available before changing it
+                }
+                    if ($row.StartDate) {
+                    if (Confirm-Step 'Join' $name "Set hire date to $($row.StartDate)") {
+                        Update-MgUser -UserId $newUser.Id -EmployeeHireDate ([datetime]$row.StartDate)
+                    }
                 }
 
                 if ($manager) {
