@@ -8,11 +8,12 @@ I used AI to help write the scripts. My part was designing how they should work,
 
 ## Highlights
 
-- **Conditional Access:** replaced security defaults with 6 policies (MFA for everyone, legacy auth block, country block, phishing-resistant MFA for admins, and a fresh passkey to activate admin roles). Every policy ran in report-only and was tested with What If before being turned on. Design and test results: [CA_Policy_Design.md](CA_Policy_Design.md)
+- **Conditional Access:** replaced security defaults with 7 policies (MFA for everyone, legacy auth block, country block, phishing-resistant MFA for admins, a fresh passkey to activate admin roles, and a device code flow block). Every policy ran in report-only and was tested with What If before being turned on. Design and test results: [CA_Policy_Design.md](CA_Policy_Design.md)
 - **Passkeys:** piloted passkeys with passwordless onboarding (Temporary Access Pass, then a device-bound passkey, then the pass is deleted). Testing showed admins could still register a phone for password reset even with SMS turned off.
 - **PIM:** no account has standing User Admin, Helpdesk or Global Admin except my daily admin and the break-glass account. Global Admin needs a second person to approve, and activating any of the three roles needs a fresh passkey.
 - **Found a real risk:** testing a policy showed a personal Microsoft account still held Global Administrator, and the tenant couldn't see how it did MFA. Removed the role and kept the audit log as evidence.
 - **PowerShell and Microsoft Graph:** scripts that export user access, flag access risks (disabled users with access, wrong department, segregation of duties, missing data) and handle joiners, movers and leavers from an HR feed with a preview mode and a log.
+- **Least privilege for scripts:** my read-only reports were signing in through Microsoft's shared Graph app and carried every permission I'd ever approved, including write. I gave them their own app registration that can only read; as Global Admin through that app, an update to a user was refused, and an unassigned user couldn't sign in at all.
 - **Lifecycle workflows:** a Finance pre-hire workflow that adds birthright access and emails the manager a Temporary Access Pass before the start date, with no ticket and no copying from a coworker.
 - **Access reviews:** quarterly review where each person's manager reviews them and a fallback reviewer covers the manager, so nobody reviews their own access. Together with my scripts, it took the access-risk findings to 0. New requested access now goes through an access package with manager approval, a 90-day expiry and a segregation-of-duties block.
 
@@ -154,6 +155,39 @@ The cloud version of the Join step in Invoke-JML.ps1, run by Entra on a schedule
 **What it caught:** the TAP started at the hire date, 05:00 UTC (midnight in New Jersey), and expired at 13:00 UTC (8:00 AM local), an hour before a 9 AM start. The workflow reported success while the new hire would still have been locked out. Fixes: raise the tenant's TAP maximum lifetime, have HR send a start time with the hire date, or generate the TAP in a day-1 workflow instead.
 
 ![Lifecycle workflow run for Hannah: both tasks completed](screenshots/lcw-workflow-history-hannah.png)
+
+## Graph authentication (Step 9)
+
+Worked through PDQ's "Microsoft Graph Authentication Made Simple, Part 1: Delegated Access" using the EntraAuth module (`Connect-EntraService`, `Invoke-EntraRequest`), then applied it to my own scripts.
+
+**What a delegated sign-in actually gets:**
+
+- `Connect-EntraService -ClientID Graph` uses a shortcut for Microsoft Graph Command Line Tools (client ID 14d82eec...), the same app `Connect-MgGraph` uses. The verbose output showed it requests `https://graph.microsoft.com/.default`, which means "everything already consented for this app", plus `offline_access` for a refresh token.
+- The token came back with User.ReadWrite.All, GroupMember.ReadWrite.All and User.RevokeSessions.All, consented months earlier for Invoke-JML.ps1. So my read-only reports were running with a token that could create and disable users.
+- Got the tenant ID with `Invoke-EntraRequest -Path 'organization?$select=id'` instead of printing `Get-EntraToken`, which would show the access and refresh tokens. Single quotes so PowerShell doesn't treat `$select` as a variable.
+
+**Device code flow:** blocked with CA007, tested before and after (see Conditional Access above).
+
+**Microsoft's own apps skip consent, and the directory is readable:** signed in as Ethan (no admin role, never approved anything) with `-ClientID Azure`, the Azure PowerShell app, which Microsoft pre-approves in every tenant. He listed all 17 users with departments, including the admin and break-glass accounts by name. Delegated access can't go beyond what the user can do, but by default every member can read the directory. "Restrict access to Microsoft Entra admin center" only hides the portal, not Graph. So I treat the directory as readable and protect privileged accounts with phishing-resistant MFA, PIM and alerts rather than obscurity.
+
+**Own app registration for read-only scripts (Lab-PowerShell-Reports):**
+
+| Setting | Value | Why |
+|---|---|---|
+| Supported accounts | Single tenant | Nobody from another tenant can sign in |
+| Platform | Mobile and desktop, redirect `http://localhost` | PowerShell receives the sign-in code on the local machine; a script can't keep a secret, so it's a public client with no secret |
+| Allow public client flows | Off (the video turns it on) | It enables device code and password-in-script flows. Browser sign-in worked without it |
+| API permissions | User.Read.All and GroupMember.Read.All, delegated. Default User.Read removed | Exactly what the report scripts read, nothing that writes |
+| Admin consent | Not granted. Consented at sign-in for my account only, "on behalf of your organization" left unchecked | Admin consent is a reviewed change, not a click on a pop-up |
+| Assignment required | Yes, only admin@ assigned. Not visible in My Apps | Default lets anyone in the tenant use the app |
+
+**Results:**
+
+- Through the shared app the token had 9 scopes including 3 write scopes; through Lab-PowerShell-Reports it had only User.Read.All, GroupMember.Read.All and sign-in basics.
+- As Global Admin through the app, listing users worked and a PATCH to Hannah's job title got `Authorization_RequestDenied`. With delegated access, what happens is the overlap of what the app is allowed and what the user is allowed.
+- Ethan, not assigned, got AADSTS50105 before consent was even checked.
+
+![Own app registration: write scopes gone, write denied for Global Admin, unassigned user refused](screenshots/app-registration-least-privilege.png)
 
 ## Scripts
 
@@ -303,6 +337,8 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 - **Group licenses moved:** the Entra admin center now only shows group license assignments; adding them is done in the Microsoft 365 admin center.
 - **"Not recognized" three different ways:** the first time I called New-LabUsername I was in Windows PowerShell 5.1, the file had been created in my home folder instead of the repo, and Notepad had saved it empty. Dot-sourcing an empty file gives no error. Now I check the folder, the shell version and Get-Content before loading anything.
 - **A "Failure" that wasn't a block:** the first device code sign-in logged a Failure with error 50199 ten seconds before the Success. 50199 is the "are you trying to sign in?" confirmation, not a block. A real Conditional Access block is 53003. Same Correlation ID means it's one sign-in.
+- **400 isn't 403:** my first write test failed with BadRequest ("must contain the Content-Type header"), which says nothing about permissions; Graph rejected the format first. Adding the header gave the real result, Authorization_RequestDenied. I read the error code before counting a failure as proof.
+- **App assignment only checks direct members:** the 50105 message says the user isn't "a direct member of a group with access". Unlike on-prem AD, a group nested inside the assigned group doesn't count, so I'd assign the groups users actually sit in.
 - **Admin view vs user view:** The admin "Add authentication method" panel on Priya's account still offers Phone number, but Priya's own Security info doesn't. Admins can store a phone number on a user; the methods policy decides whether the user can use it.
 
 ## Things I learned
@@ -364,6 +400,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - CA005 for Ethan, User action required vs Success: `screenshots/ca005-before-after-ethan.png`
 
 **Graph authentication (Step 9)**
+- Own app registration: scopes before and after, write denied, unassigned user refused: `screenshots/app-registration-least-privilege.png`
 - CA007: device code sign-in allowed before, blocked with 53003 after: `screenshots/ca007-device-code-before-after.png`
 
 **PIM (Step 5)**
@@ -410,6 +447,10 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [ ] Passkey profile for admins: device-bound only with attestation enforced
 - [ ] Clean up stored phone numbers on accounts so they can't come back if SMS is re-enabled
 - [x] Block device code flow with Conditional Access and test before and after (CA007, Nov 12)
+- [x] Read-only app registration for report scripts, Assignment required, tested with a denied write and an unassigned user (Nov 13)
+- [ ] Switch Export-UserGroupMembership.ps1 and Find-AccessRisks.ps1 to sign in through Lab-PowerShell-Reports
+- [ ] Review the tenant's user consent settings and permission classifications
+- [ ] Application permissions with a certificate for unattended jobs (Part 2 of the PDQ series)
 - [ ] Download the JSON for CA001 to CA007 into the repo
 - [ ] Recapture the missing screenshots (permissions, SAML, managed identity, RBAC, licensing, groups, CA006) before Nov 23
 - [ ] Use an approver group instead of one person for Global Admin
