@@ -231,7 +231,7 @@ It runs in preview mode by default and only shows what it would do. It only make
 
 **Handling the HR feed:** After a real run, rows that finished get moved to hr-feed-processed.csv with the date. Rows that failed or had bad data (user not found, department not in the rules, unknown action) stay in hr-feed.csv so a person can fix them and run it again. Preview mode never touches the files. I started out doing this by hand and had the script do it once I saw how easy it was to forget.
 
-**Current feed columns:** `Action,DisplayName,Department,JobTitle,Manager,StartDate`
+**Current feed columns:** `Action,EmployeeId,DisplayName,Department,JobTitle,Manager,StartDate`
 
 **First test feed:**
 
@@ -264,6 +264,24 @@ Priya's move is the one I care about most. At my job, when someone changes roles
 - **Hire date:** the feed has a StartDate column and the Join step sets `employeeHireDate`, so new joiners trigger the Step 7 pre-hire workflow. Before this, script-created users had no hire date and the workflow would never pick them up. Writing the hire date needs `User-LifeCycleInfo.ReadWrite.All`, which User.ReadWrite.All doesn't cover.
 - **Scope check before any change:** the script now compares the scopes in the current token with the four it needs and stops with "Missing Graph scopes: ..." before touching a user, instead of creating the account and failing halfway with a 403. Tested: a session without the lifecycle scope was stopped at the check.
 - **Test:** Nadia Rahim (Finance, start 2026-11-20). Preview showed create, hire date, manager, Finance-Share; after `-Apply`, Graph showed UsageLocation US and employeeHireDate 11/20/2026 5:00 AM. Midnight New Jersey time is stored as 05:00 UTC, the same cause as the TAP window finding in Step 7.
+- **The whole chain, with nobody in between:** about an hour after the script ran, the Step 7 pre-hire workflow picked Nadia up on its schedule. "Add Finance birthright access" completed with "User already a member of requested group", so the workflow and the script can both run without conflicting. "Generate TAP and Send Email" completed and Daniel got the TAP, valid Nov 20 05:00 to 13:00 UTC: the 8 AM expiry problem again.
+
+![Invoke-JML to lifecycle workflow: Nadia processed, birthright already present, TAP emailed to her manager](screenshots/jml-to-lifecycle-workflow-nadia.png)
+
+**Matching joiners on employee ID (Nov 15):** the Join step used to check "does this display name exist?", so a second person with the same name would have been skipped as "already exists". Now:
+
+- A Join row needs an `EmployeeId`; without one it's skipped and stays in the feed for HR to fix.
+- The script looks the person up by `employeeId` and writes the ID onto new accounts, so the next run can find them.
+- Usernames still use first.last, the tenant's existing standard. `Get-FreeNickname` checks Graph for the UPN and mail nickname and adds a number if taken: the "taken list from Graph" idea from New-LabUsername.
+
+**What the preview caught:** test feed with yesterday's Nadia (E1001), a different Nadia Rahim joining Sales (E1002), and Omar with no ID. The first preview planned to create nadia.rahim2 for the Nadia who already had an account, because her account was created before IDs existed and had no employeeId. Applying it would have given one person two accounts and her manager a second TAP. Switching to ID matching needs a backfill of IDs on existing accounts first. After `Update-MgUser -EmployeeId E1001` on her account, the preview skipped her, created the Sales Nadia as nadia.rahim2 (E1002), and skipped Omar. Applied: 2 rows moved to the processed file, Omar left for review.
+
+**Move and Leave by employee ID too:** with two Nadia Rahims in the tenant, a Leave row matched by name would have hit both. Move and Leave now need an `EmployeeId` and look the person up by it. Managers are still found by name, since the feed gives the manager's name; that's the next weak spot.
+
+- **A missing property would have broken Move silently:** the Move step reads `$user.Department` to decide which old groups to remove. The new lookup first asked Graph only for Id, name, UPN and EmployeeId, so Department would have come back blank with no error, and the mover would have kept the old department's access. Added Department and AccountEnabled to the lookup.
+- **Log shows who, not just a name:** log lines now read `Nadia Rahim (E1002)`. A bare name in the log means no ID was given.
+- **Test:** Move E1002 from Sales to Finance, plus a Leave row with no ID. Preview showed "Department Sales -> Finance", add Finance-Share, remove Sales-Share, and skipped the Leave. Applied: Graph showed E1002 as Finance / AP Specialist and E1001 unchanged; the Leave row and Omar stayed in the feed.
+- **Noise to fix later:** the Move step flags the tenant's org-wide group as "requested access, confirm with group owner". Nobody requested it and it can't be removed, and dynamic groups have the same problem. REVIEW lines people learn to ignore are worse than none.
 
 ### 4. New-LabUsername.ps1 (Step 8)
 
@@ -295,6 +313,24 @@ Limits I'd fix before production: the taken list should come from Graph instead 
 ### 5. Filter-FinanceHires.ps1 (Step 8)
 
 Filters new-hires.csv to Finance, adds a StartDate column with a calculated property, and exports finance-hires.csv. It warns about rows with no department first (Samira in the sample file) instead of letting them disappear quietly.
+
+### 6. Remove-LabLeaver.ps1 (Step 9)
+
+Offboards one person right now, from a ticket, without waiting for the HR feed: `.\Remove-LabLeaver.ps1 -EmployeeId E1002 -Ticket INC-90031`, preview by default, `-Apply` to act. Built for the "walked out at 2 PM" case where IT gets a call, not a CSV row.
+
+1. **Find exactly one user** by employee ID. Zero or more than one: log STOPPED and do nothing.
+2. **Snapshot** every group the person is in, before any change, for the audit and as an undo list.
+3. **Disable** the account. If that fails, stop: never strip access from an account that can still sign in.
+4. **Revoke sessions** so refresh tokens already issued stop working. Disable comes first, so no new session can start in between. An access token already issued can still live up to about an hour unless the app supports Continuous Access Evaluation.
+5. **Remove group memberships** one at a time, each with its own error handling. Dynamic groups and tenant-managed groups (the org-wide group) are skipped with a note.
+
+Every step goes to leaver-log.csv with the timestamp, preview or applied, ticket number, employee ID and UPN. `-Ticket` is mandatory: no ticket, no offboarding.
+
+**Tests:** E9999 (doesn't exist) stopped with "found 0 users". E1002 preview listed the snapshot, disable, revoke, remove Finance-Share and the two skips. Applied: AccountEnabled False, Finance-Share removed.
+
+**What the test caught in my own script:** the skip message for dynamic groups said "its rule removes members", but right after the run she was still in DYN-Finance-Users. The rule already excludes disabled users, and Validate Rules showed she no longer matches, but dynamic membership is updated in the background, not instantly. The message now says the group is removed only if the rule excludes disabled users, and to verify later. A log line that claims something is done when it isn't is worse than no log.
+
+**Not covered yet:** directory roles and PIM eligibility, ownership of apps and groups, direct reports who need a new manager, and the mailbox.
 
 ## What the scripts found
 
@@ -429,6 +465,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 **Lifecycle workflow (Step 7)**
 - Workflow history: Hannah processed, both tasks completed: `screenshots/lcw-workflow-history-hannah.png`
 - TAP email to the manager (code hidden): `screenshots/lcw-tap-email-to-manager.png`
+- Invoke-JML joiner picked up by the workflow, TAP emailed (code hidden): `screenshots/jml-to-lifecycle-workflow-nadia.png`
 
 **Access package (Step 6)**
 - Priya's assignment: Delivered, ends Feb 3, 2027: `screenshots/access-package-assignment-priya.png`
@@ -465,9 +502,13 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] Block device code flow with Conditional Access and test before and after (CA007, Nov 12)
 - [x] Read-only app registration for report scripts, Assignment required, tested with a denied write and an unassigned user (Nov 13)
 - [x] Invoke-JML: UsageLocation on new users, hire date from the feed, scope check before any change (Nov 13)
-- [ ] Invoke-JML: match joiners on an HR EmployeeId instead of display name, and build usernames with New-LabUsername checked against Graph
-- [ ] Standalone leaver script with a timestamped log
-- [ ] Confirm the lifecycle workflow picked up Nadia Rahim and emailed Daniel a TAP
+- [x] Invoke-JML: match joiners on EmployeeId, free usernames checked against Graph, backfill before switching (Nov 15)
+- [x] Invoke-JML: Move and Leave by EmployeeId, ID in every log line (Nov 15)
+- [ ] Invoke-JML: skip org-wide and dynamic groups in mover REVIEW lines
+- [ ] Invoke-JML: find managers by employee ID instead of name
+- [x] Standalone leaver script by employee ID with ticket number, snapshot and timestamped log (Remove-LabLeaver.ps1, Nov 15)
+- [ ] Leaver script: check directory roles, PIM eligibility and app ownership before offboarding
+- [x] Confirm the lifecycle workflow picked up Nadia Rahim and emailed Daniel a TAP (Nov 13, 11:21 PM)
 - [ ] Switch Export-UserGroupMembership.ps1 and Find-AccessRisks.ps1 to sign in through Lab-PowerShell-Reports
 - [x] User consent limited to verified publishers and 5 low-risk permissions, admin consent workflow on (Nov 13)
 - [ ] Test the admin consent workflow: a user requests a blocked permission and admin@ approves or denies it

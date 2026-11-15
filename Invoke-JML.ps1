@@ -70,6 +70,22 @@ function Find-User {
     $safe = $Name.Replace("'", "''")
     Get-MgUser -Filter "displayName eq '$safe'" -Property Id, DisplayName, UserPrincipalName, Department, AccountEnabled
 }
+function Find-UserByEmployeeId {
+    param([string]$EmployeeId)
+    $safe = $EmployeeId.Replace("'", "''")
+    Get-MgUser -Filter "employeeId eq '$safe'" -Property Id, DisplayName, UserPrincipalName, EmployeeId, Department, AccountEnabled
+}
+
+function Get-FreeNickname {
+    param([string]$Base)
+    $candidate = $Base
+    $n = 2
+    while (Get-MgUser -Filter "userPrincipalName eq '$candidate@$Domain' or mailNickname eq '$candidate'") {
+        $candidate = "$Base$n"
+        $n++
+    }
+    return $candidate
+}
 
 function Find-Group {
     param([string]$Name)
@@ -99,55 +115,59 @@ foreach ($row in $feed) {
     $script:keepRow = $false
     $action = $row.Action.Trim()
     $name   = $row.DisplayName.Trim()
+        $label  = if ($row.EmployeeId) { "$name ($($row.EmployeeId.Trim()))" } else { $name }
     Write-Host ""
-    Write-Host "== $action : $name ==" -ForegroundColor Yellow
+    Write-Host "== $action : $label ==" -ForegroundColor Yellow
 
     try {
         switch ($action) {
 
             'Join' {
-                if (Find-User $name) { Write-Log 'Join' $name 'SKIPPED: user already exists'; break }
+                if (-not $row.EmployeeId) { Write-Log 'Join' $label 'SKIPPED: no EmployeeId in the feed'; break }
+                if (Find-UserByEmployeeId $row.EmployeeId.Trim()) { Write-Log 'Join' $label "SKIPPED: employee ID $($row.EmployeeId) already exists"; break }
                 if (-not $birthrightGroups.ContainsKey($row.Department)) {
-                    Write-Log 'Join' $name "SKIPPED: no access rules for department '$($row.Department)'"; break
+                    Write-Log 'Join' $label "SKIPPED: no access rules for department '$($row.Department)'"; break
                 }
 
                 $manager  = if ($row.Manager) { Find-User $row.Manager.Trim() } else { $null }
-                $nickname = (($name.Normalize([Text.NormalizationForm]::FormD) -replace '\p{Mn}', '').ToLower() -replace '[^a-z ]', '') -replace ' ', '.'
+                $base     = (($name.Normalize([Text.NormalizationForm]::FormD) -replace '\p{Mn}', '').ToLower() -replace '[^a-z ]', '') -replace ' ', '.'
+                $nickname = Get-FreeNickname $base
                 $upn      = "$nickname@$Domain"
                 $newUser  = $null
 
-                if (Confirm-Step 'Join' $name "Create account $upn ($($row.Department), $($row.JobTitle))") {
+                if (Confirm-Step 'Join' $label "Create account $upn ($($row.Department), $($row.JobTitle))") {
                     $password = (-join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | ForEach-Object { [char]$_ })) + 'Aa1!'
-                    $newUser = New-MgUser -DisplayName $name -UserPrincipalName $upn -MailNickname $nickname `
+                    $newUser = New-MgUser -DisplayName $name -UserPrincipalName $upn -MailNickname $nickname -EmployeeId $row.EmployeeId.Trim() `
                         -AccountEnabled:$true -Department $row.Department -JobTitle $row.JobTitle -UsageLocation 'US' `
                         -PasswordProfile @{ Password = $password; ForceChangePasswordNextSignIn = $true }
                     Start-Sleep -Seconds 10   # give the new account time to be available before changing it
                 }
                     if ($row.StartDate) {
-                    if (Confirm-Step 'Join' $name "Set hire date to $($row.StartDate)") {
+                    if (Confirm-Step 'Join' $label "Set hire date to $($row.StartDate)") {
                         Update-MgUser -UserId $newUser.Id -EmployeeHireDate ([datetime]$row.StartDate)
                     }
                 }
 
                 if ($manager) {
-                    if (Confirm-Step 'Join' $name "Set manager to $($manager.DisplayName)") {
+                    if (Confirm-Step 'Join' $label "Set manager to $($manager.DisplayName)") {
                         Set-Manager $newUser.Id $manager.Id
                     }
                 }
 
                 foreach ($g in $birthrightGroups[$row.Department]) {
                     $grp = Find-Group $g
-                    if (Confirm-Step 'Join' $name "Add to $g (birthright for $($row.Department))") {
+                    if (Confirm-Step 'Join' $label "Add to $g (birthright for $($row.Department))") {
                         New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $newUser.Id
                     }
                 }
             }
 
             'Move' {
-                $user = Find-User $name
-                if (-not $user) { Write-Log 'Move' $name 'SKIPPED: user not found'; break }
+                if (-not $row.EmployeeId) { Write-Log 'Move' $label 'SKIPPED: no EmployeeId in the feed'; break }
+                $user = Find-UserByEmployeeId $row.EmployeeId.Trim()
+                if (-not $user) { Write-Log 'Move' $label 'SKIPPED: user not found'; break }
                 if (-not $birthrightGroups.ContainsKey($row.Department)) {
-                    Write-Log 'Move' $name "SKIPPED: no access rules for department '$($row.Department)'"; break
+                    Write-Log 'Move' $label "SKIPPED: no access rules for department '$($row.Department)'"; break
                 }
 
                 $newDept   = $row.Department
@@ -155,21 +175,21 @@ foreach ($row in $feed) {
                 $newGroups = @($birthrightGroups[$newDept])
                 $current   = @(Get-UserGroups $user.Id)
 
-                if (Confirm-Step 'Move' $name "Department $($user.Department) -> $newDept, title -> $($row.JobTitle)") {
+                if (Confirm-Step 'Move' $label "Department $($user.Department) -> $newDept, title -> $($row.JobTitle)") {
                     Update-MgUser -UserId $user.Id -Department $newDept -JobTitle $row.JobTitle
                 }
 
                 if ($manager) {
-                    if (Confirm-Step 'Move' $name "Set manager to $($manager.DisplayName)") {
+                    if (Confirm-Step 'Move' $label "Set manager to $($manager.DisplayName)") {
                         Set-Manager $user.Id $manager.Id
                     }
                 }
 
                 # Add the new department's birthright groups
                 foreach ($g in $newGroups) {
-                    if ($current.Name -contains $g) { Write-Log 'Move' $name "Already in $g"; continue }
+                    if ($current.Name -contains $g) { Write-Log 'Move' $label "Already in $g"; continue }
                     $grp = Find-Group $g
-                    if (Confirm-Step 'Move' $name "Add to $g (birthright for $newDept)") {
+                    if (Confirm-Step 'Move' $label "Add to $g (birthright for $newDept)") {
                         New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $user.Id
                     }
                 }
@@ -177,42 +197,43 @@ foreach ($row in $feed) {
                 # Remove old department access; flag requested access for review instead of removing it
                 foreach ($cg in $current) {
                     if ($cg.Name -in $allBirthright -and $cg.Name -notin $newGroups) {
-                        if (Confirm-Step 'Move' $name "Remove from $($cg.Name) (old department access)") {
+                        if (Confirm-Step 'Move' $label "Remove from $($cg.Name) (old department access)") {
                             Remove-MgGroupMemberByRef -GroupId $cg.Id -DirectoryObjectId $user.Id
                         }
                     }
                     elseif ($cg.Name -notin $allBirthright) {
-                        Write-Log 'Move' $name "REVIEW: still in $($cg.Name) (requested access, confirm with group owner)"
+                        Write-Log 'Move' $label "REVIEW: still in $($cg.Name) (requested access, confirm with group owner)"
                     }
                 }
             }
 
             'Leave' {
-                $user = Find-User $name
-                if (-not $user) { Write-Log 'Leave' $name 'SKIPPED: user not found'; break }
+                if (-not $row.EmployeeId) { Write-Log 'Leave' $label 'SKIPPED: no EmployeeId in the feed'; break }
+                $user = Find-UserByEmployeeId $row.EmployeeId.Trim()
+                if (-not $user) { Write-Log 'Leave' $label 'SKIPPED: user not found'; break }
 
-                if (Confirm-Step 'Leave' $name 'Disable account') {
+                if (Confirm-Step 'Leave' $label 'Disable account') {
                     Update-MgUser -UserId $user.Id -AccountEnabled:$false
                 }
 
-                if (Confirm-Step 'Leave' $name 'Revoke sign-in sessions') {
+                if (Confirm-Step 'Leave' $label 'Revoke sign-in sessions') {
                     Revoke-MgUserSignInSession -UserId $user.Id | Out-Null
                 }
 
                 foreach ($cg in @(Get-UserGroups $user.Id)) {
-                    if (Confirm-Step 'Leave' $name "Remove from $($cg.Name)") {
+                    if (Confirm-Step 'Leave' $label "Remove from $($cg.Name)") {
                         Remove-MgGroupMemberByRef -GroupId $cg.Id -DirectoryObjectId $user.Id
                     }
                 }
             }
 
             default {
-                Write-Log $action $name 'SKIPPED: unknown action'
+                Write-Log $action $label 'SKIPPED: unknown action'
             }
         }
     }
     catch {
-        Write-Log $action $name "FAILED: $($_.Exception.Message)"
+        Write-Log $action $label "FAILED: $($_.Exception.Message)"
     }
 
     if ($script:keepRow) { $remaining.Add($row) } else { $processed.Add($row) }
