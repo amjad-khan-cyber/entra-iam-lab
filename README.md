@@ -196,6 +196,27 @@ Worked through PDQ's "Microsoft Graph Authentication Made Simple, Part 1: Delega
 - **Admin consent workflow:** on, with admin@ as reviewer, email notifications and reminders, requests expire after 30 days. Users who hit a blocked app get a request button instead of a dead end. At work the reviewers would be a group or role, not one person.
 - **Not tested yet:** a user requesting a permission outside the list and the request reaching the reviewer.
 
+## SSO protocols: SAML and OIDC (Step 10)
+
+Captured both protocols for the same user (Priya) and compared them line by line. Full comparison, including OAuth and SCIM: [PROTOCOLS_CHEAT_SHEET.md](PROTOCOLS_CHEAT_SHEET.md)
+
+**OIDC:** registered Lab-OIDC-jwtms (single tenant, Web redirect `https://jwt.ms`, ID tokens only) and signed in through the authorize endpoint with `response_type=id_token` and `scope=openid profile email`. Priya got a consent screen she could accept herself, which confirmed the consent settings from Step 9 (app registered in my tenant, permissions classified low). Labeled iss, aud, sub, exp, nonce and oid. The implicit flow was only for this decoder lab and is turned off again.
+
+![OIDC ID token decoded at jwt.ms with claims labeled](screenshots/oidc-id-token-labeled.png)
+
+**SAML:** captured the response from the Microsoft Entra SAML Toolkit with SAML-tracer and labeled Issuer, Audience, NameID, Conditions, Signature, the MFA claim and AuthnInstant. The objectidentifier attribute has the same value as `oid` in the ID token, and AuthnInstant was 19 minutes before the assertion was issued, so the session was reused (SSO).
+
+![SAML response decoded with SAML-tracer, elements labeled](screenshots/saml-response-labeled.png)
+
+**What I had to fix to get there:**
+
+- **The SSO tile opened the app's home page instead of signing in.** The Sign on URL from October was the toolkit's home page, which never starts a sign-in. The toolkit's own configuration page lists an SP-initiated login URL (`/SAML/Login/22637`); with that as the Sign on URL, the app sends a SAML request and Entra answers. Entra's test button and My Apps both follow the Sign on URL, so neither produced a SAML response before the fix.
+- **Entra sent a valid assertion, then the app crashed.** The NameID was Priya, but the only toolkit account was the user I registered in October. That's the "user not provisioned in the app" problem SCIM solves.
+- **The app decides the NameID.** The toolkit requires the emailAddress format, so the UPN stays as the NameID here even though UPNs can change.
+- **Certificate expiry notices go to my personal email.** Fine for a lab; at work they belong in a shared mailbox, or an expired certificate breaks SSO for everyone.
+
+![SAML Toolkit configuration in Entra: Entity ID, Reply URL, claims, signing certificate](screenshots/saml-entra-config.png)
+
 ## Scripts
 
 ### 1. Export-UserGroupMembership.ps1
@@ -451,6 +472,11 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Admin can store a phone, user can't use it: `screenshots/sms-admin-vs-user.png`
 - CA005 for Ethan, User action required vs Success: `screenshots/ca005-before-after-ethan.png`
 
+**SSO protocols (Step 10)**
+- OIDC ID token decoded and labeled: `screenshots/oidc-id-token-labeled.png`
+- SAML response decoded and labeled: `screenshots/saml-response-labeled.png`
+- SAML Toolkit configuration in Entra: `screenshots/saml-entra-config.png`
+
 **Graph authentication (Step 9)**
 - Own app registration: scopes before and after, write denied, unassigned user refused: `screenshots/app-registration-least-privilege.png`
 - CA007: device code sign-in allowed before, blocked with 53003 after: `screenshots/ca007-device-code-before-after.png`
@@ -473,7 +499,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Daniel blocked by the separation-of-duties rule: `screenshots/access-package-sod-blocked-daniel.png`
 - Ethan (IT) can't see the package: `screenshots/access-package-hidden-ethan.png`
 
-**Not captured yet:** screenshots for the app permissions, consent, SAML, managed identity, Azure RBAC, licensing, group and CA006 labs. I'll recapture the ones that still exist before the E5 trial ends on Nov 23.
+**Not captured yet:** screenshots for the app permissions, consent, managed identity, Azure RBAC, licensing, group and CA006 labs. I'll recapture the ones that still exist before the E5 trial ends on Nov 23.
 
 ## Next
 
@@ -509,6 +535,8 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] Standalone leaver script by employee ID with ticket number, snapshot and timestamped log (Remove-LabLeaver.ps1, Nov 15)
 - [ ] Leaver script: check directory roles, PIM eligibility and app ownership before offboarding
 - [x] Confirm the lifecycle workflow picked up Nadia Rahim and emailed Daniel a TAP (Nov 13, 11:21 PM)
+- [x] OIDC ID token decoded at jwt.ms, SAML response captured with SAML-tracer, protocol cheat sheet (Step 10, Nov 16)
+- [ ] Register Priya in the SAML Toolkit (or provision with SCIM where an app supports it) so her SSO completes
 - [ ] Switch Export-UserGroupMembership.ps1 and Find-AccessRisks.ps1 to sign in through Lab-PowerShell-Reports
 - [x] User consent limited to verified publishers and 5 low-risk permissions, admin consent workflow on (Nov 13)
 - [ ] Test the admin consent workflow: a user requests a blocked permission and admin@ approves or denies it
