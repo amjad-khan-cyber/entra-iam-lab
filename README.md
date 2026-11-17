@@ -97,6 +97,8 @@ Break-glass is excluded by name from all seven. When turning policies On, the po
 | Helpdesk Administrator | 2 hours | Authentication context (CA006), justification | No | Max 1 year, no permanent | Max 15 days, MFA + justification, no permanent |
 | Global Administrator | 1 hour | Authentication context (CA006), justification | Yes, admin@ approves | Microsoft defaults | Permanent still allowed, because break-glass needs permanent Global Admin |
 
+![PIM role settings for User Administrator](screenshots/pim-user-admin-settings.png)
+
 Activation alerts for all three go to an inbox I read, in addition to the default admin recipients.
 
 **What I tested:**
@@ -105,6 +107,8 @@ Activation alerts for all three go to an inbox I read, in addition to the defaul
 - **Approval for Global Admin:** Ethan requested Global Admin with the reason "daily tasks". I denied it as admin@ ("not an appropriate justification"). He resubmitted with a specific change, I confirmed with him over Teams and approved with an incident number. The audit log shows the request, approval and activation with the same Correlation ID, and the activation expired an hour after approval. Ethan's Global Admin eligibility was removed afterwards.
 - **Helpdesk from permanent to eligible:** ROLE-Helpdesk-Admins had Helpdesk Administrator as a permanent active assignment. I added an eligible assignment for the group first, then removed the permanent one, so Ethan was never without a working path. Resetting Priya's password failed before activation and worked after.
 - **Step-up at activation (CA006):** CA003 and CA005 target admin roles at sign-in, but a PIM-eligible admin isn't an admin when they sign in, and PIM's "Azure MFA" option accepts any MFA, including push. I created an authentication context (c1, PIM Role Activation), a CA policy requiring phishing-resistant MFA every time for that context, and linked it to all three roles. Ethan signed in with push, clicked Activate, and was sent to a sign-in screen for his passkey (QR code to the phone). When he had signed in with a passkey a minute earlier, he wasn't prompted again, because "every time" allows five minutes of clock skew.
+
+![CA006: authentication context c1, phishing-resistant MFA, sign-in frequency every time](screenshots/ca006-authentication-context.png)
 
 ![Global Admin request denied for a vague reason](screenshots/pim-ga-request-denied.png)
 
@@ -140,6 +144,8 @@ This only governs access given through the package. Someone could still be added
 ## Lifecycle workflow (Step 7)
 
 The cloud version of the Join step in Invoke-JML.ps1, run by Entra on a schedule. Needs Microsoft Entra ID Governance (started the trial and licensed 11 users through a dedicated LIC-ID-Governance group, assigned in the Microsoft 365 admin center).
+
+![Group-based licensing: 11 licenses through LIC-ID-Governance, 0 errors](screenshots/group-based-licensing.png)
 
 | Part | Setting | Why |
 |---|---|---|
@@ -351,7 +357,7 @@ Every step goes to leaver-log.csv with the timestamp, preview or applied, ticket
 
 **What the test caught in my own script:** the skip message for dynamic groups said "its rule removes members", but right after the run she was still in DYN-Finance-Users. The rule already excludes disabled users, and Validate Rules showed she no longer matches, but dynamic membership is updated in the background, not instantly. The message now says the group is removed only if the rule excludes disabled users, and to verify later. A log line that claims something is done when it isn't is worse than no log.
 
-**Not covered yet:** directory roles and PIM eligibility, ownership of apps and groups, direct reports who need a new manager, and the mailbox.
+**Not covered yet:** directory roles and PIM eligibility, ownership of apps and groups, direct reports who need a new manager, the mailbox, and sign-in methods. The offboarded test user still had a Temporary Access Pass: moving her into Finance had made the pre-hire workflow treat her as a new Finance hire (department Finance, hire date within 7 days), and disabling the account left the pass in place. It's unusable while the account is disabled, but it would work again if someone re-enabled her, so I deleted it by hand. A mover can trigger a joiner workflow, and a leaver should lose their TAPs and other methods too.
 
 ### 7. Export-CAPolicies.ps1
 
@@ -493,6 +499,8 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - CA007: device code sign-in allowed before, blocked with 53003 after: `screenshots/ca007-device-code-before-after.png`
 
 **PIM (Step 5)**
+- User Administrator role settings (2-hour activation with authentication context, 1 year / 15 days, no permanent): `screenshots/pim-user-admin-settings.png`
+- CA006 and authentication context c1 (target, grant, session): `screenshots/ca006-authentication-context.png`
 - User Administrator eligible: user creation failed, then succeeded after activation: `screenshots/pim-user-admin-before-after.png`
 - Ethan's My roles showing Activated (User Admin) vs Assigned/Permanent (Helpdesk, before it was moved to eligible): `screenshots/pim-activated-vs-assigned.png`
 - Global Admin request denied for "daily tasks": `screenshots/pim-ga-request-denied.png`
@@ -500,6 +508,8 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Helpdesk eligible: password reset refused, then allowed after activation: `screenshots/pim-helpdesk-eligible.png`
 
 **Lifecycle workflow (Step 7)**
+- Group-based licensing through LIC-ID-Governance, 0 errors: `screenshots/group-based-licensing.png`
+- DYN-Finance-Users rule: department Finance and account enabled, so disabled leavers drop out: `screenshots/dynamic-group-rule.png`
 - Workflow history: Hannah processed, both tasks completed: `screenshots/lcw-workflow-history-hannah.png`
 - TAP email to the manager (code hidden): `screenshots/lcw-tap-email-to-manager.png`
 - Invoke-JML joiner picked up by the workflow, TAP emailed (code hidden): `screenshots/jml-to-lifecycle-workflow-nadia.png`
@@ -510,7 +520,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Daniel blocked by the separation-of-duties rule: `screenshots/access-package-sod-blocked-daniel.png`
 - Ethan (IT) can't see the package: `screenshots/access-package-hidden-ethan.png`
 
-**Not captured yet:** screenshots for the app permissions, consent, managed identity, Azure RBAC, licensing, group and CA006 labs. I'll recapture the ones that still exist before the E5 trial ends on Nov 23.
+**Not captured yet:** screenshots for the app permissions, consent, managed identity and Azure RBAC labs (none of these depend on the trial). I'll recapture the ones that still exist before the E5 trial ends on Nov 23.
 
 ## Next
 
