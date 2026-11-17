@@ -49,7 +49,7 @@ Break-glass rules I'm following: cloud-only on the onmicrosoft.com domain, perma
 
 ## Conditional Access and authentication
 
-Full design, What If results and rollout plan: `CA_Policy_Design.md`.
+Full design, What If results and rollout plan: `CA_Policy_Design.md`. The exported policies themselves are in [ca-policies/](ca-policies/), one JSON file per policy (see Export-CAPolicies.ps1 below).
 
 | Policy | Who | Requires | State |
 |---|---|---|---|
@@ -353,6 +353,14 @@ Every step goes to leaver-log.csv with the timestamp, preview or applied, ticket
 
 **Not covered yet:** directory roles and PIM eligibility, ownership of apps and groups, direct reports who need a new manager, and the mailbox.
 
+### 7. Export-CAPolicies.ps1
+
+Exports every Conditional Access policy to JSON, one file per policy, so the configuration survives after the trial licence ends and can be compared or restored later. Read-only.
+
+Raw exports contain the tenant's object IDs: the break-glass account, groups, named locations, and each policy's own ID. The script swaps users, groups and locations for their names, removes the policy IDs, then scans every file for anything still shaped like an ID and refuses to call it clean until nothing tenant-specific is left. Directory role template IDs and built-in authentication strength IDs are the same in every tenant, so those stay.
+
+The final scan caught two leaks I didn't know about: Graph repeats each policy's ID inside `@odata.context` metadata lines, once in the grant controls and again one level deeper inside the authentication strength. The first run warned about 9 IDs, the second about 2, the third came back clean. Every exclusion now reads `user: Break Glass 01 (Emergency Admin)`, which shows from the files alone that break-glass is excluded from all seven policies.
+
 ## What the scripts found
 
 I set up these problems on purpose:
@@ -369,6 +377,8 @@ Find-AccessRisks.ps1 caught all of them (5 findings).
 **Step 6, the access review (Nov 1 to 2):** the Graph scripts first gave a fresh baseline of 4 findings: Sofia, James, Aisha, and a new one, a hand-made PIM test account with no department, created outside the JML process. I deleted that account with Graph (preview with -WhatIf first). Then I ran a quarterly Entra access review on Finance-Share, AP-Vendor-Create and AP-Payment-Approve, with each person's manager as reviewer and my admin account as fallback, so Daniel's own access was reviewed by someone else. Daniel denied Sofia and James on Finance-Share and Aisha on AP-Payment-Approve (she keeps AP-Vendor-Create), each with a reason. After the review was stopped, auto-apply removed them, though it took several hours. Find-AccessRisks.ps1 now reports **No findings** across 16 users.
 
 ![Find-AccessRisks.ps1: no findings after the access review](screenshots/findings-zero.png)
+
+![Access review results: Sofia, James and Aisha's payment approval denied and removed; Daniel reviewed by the fallback reviewer](screenshots/access-review-results.png)
 
 ## Things I ran into
 
@@ -457,6 +467,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - 5 findings before any fixes: `screenshots/findings-before.png`
 - 3 findings after fixing the service account: `screenshots/findings-after-svc-fix.png`
 - No findings after the access review: `screenshots/findings-zero.png`
+- Access review results for Finance-Share and AP-Payment-Approve (decisions, reviewer, apply result): `screenshots/access-review-results.png`
 - My missing department rule catching the admin account: `screenshots/findings-rule6-missing-department.png`
 - JML preview: `screenshots/jml-preview.png`
 - JML applied: `screenshots/jml-applied.png`
@@ -541,7 +552,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] User consent limited to verified publishers and 5 low-risk permissions, admin consent workflow on (Nov 13)
 - [ ] Test the admin consent workflow: a user requests a blocked permission and admin@ approves or denies it
 - [ ] Application permissions with a certificate for unattended jobs (Part 2 of the PDQ series)
-- [ ] Download the JSON for CA001 to CA007 into the repo
+- [x] Export CA001 to CA007 as sanitized JSON with Export-CAPolicies.ps1 (Nov 16)
 - [ ] Recapture the missing screenshots (permissions, SAML, managed identity, RBAC, licensing, groups, CA006) before Nov 23
 - [ ] Use an approver group instead of one person for Global Admin
 - [ ] Require ticket information on Global Admin activation
