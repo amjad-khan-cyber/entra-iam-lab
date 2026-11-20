@@ -155,6 +155,8 @@ The cloud version of the Join step in Invoke-JML.ps1, run by Entra on a schedule
 
 ![Group-based licensing: 11 licenses through LIC-ID-Governance, 0 errors](screenshots/group-based-licensing.png)
 
+**P2 after the E5 trial (Nov 20):** the E5 trial ends Nov 23, so I started a standalone Entra ID P2 trial that ends Dec 20 and doesn't renew (recurring billing off). I declined two offers that looked similar but converted into a 1-year paid subscription unless cancelled. Licenses go to a dynamic group, LIC-Entra-P2, rule `(user.userType -eq "Member") -and (user.accountEnabled -eq true)`: 16 enabled members got P2, the three disabled leavers didn't, and future joiners are licensed when their account is created. The rule also includes break-glass and the service account, which at work would be a deliberate decision rather than a side effect.
+
 | Part | Setting | Why |
 |---|---|---|
 | Template | Onboard pre-hire employee (category Joiner) | Runs before the start date |
