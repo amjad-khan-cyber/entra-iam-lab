@@ -55,9 +55,9 @@ Full design, What If results and rollout plan: `CA_Policy_Design.md`. The export
 |---|---|---|---|
 | CA001-Require-MFA-AllUsers | All users | MFA | On |
 | CA002-Block-Legacy-Auth | All users | Block legacy protocols | On (Oct 29) |
-| CA003-Require-MFA-Admins | 7 admin roles | MFA | On (Oct 29); backup if CA001 ever changes, retire once CA005 is On |
+| CA003-Require-MFA-Admins | 7 admin roles | MFA | Off (Nov 19): retired once CA005 was On, kept for rollback |
 | CA004-Block-Selected-Countries | All users | Block named high-risk countries | On (Oct 29) |
-| CA005-Require-PhishResistant-Admins | 7 admin roles | Phishing-resistant MFA authentication strength | Report-only |
+| CA005-Require-PhishResistant-Admins | 7 admin roles | Phishing-resistant MFA authentication strength | On (Nov 19) |
 | CA006-PIM-Activation-PhishResistant | All users, only when authentication context c1 (PIM Role Activation) is requested | Phishing-resistant MFA, sign-in frequency every time | On |
 | CA007-Block-DeviceCodeFlow | All users, all resources, only sign-ins using device code flow | Block | On (Nov 12) |
 
@@ -83,7 +83,15 @@ Break-glass is excluded by name from all seven. When turning policies On, the po
 
 ![Admin can store a phone number, the pilot user can't use it](screenshots/sms-admin-vs-user.png)
 
-**Before CA005 is switched On:** a few days of report-only data with no Failure results, Passkey (FIDO2) widened to All users so a future admin outside these groups can register one, and admin self-service password reset turned off (see below).
+**Turning CA005 on (Nov 19):** the two gaps report-only testing had found were closed first, then the policy was enforced.
+
+1. **Passkey (FIDO2) widened to All users.** Allowed to register is separate from required to use: this lets any future admin register a passkey, and forces nobody.
+2. **Admin self-service password reset turned off** with Graph (`allowedToUseSSPR` on the authorization policy: was True, now False), so a phone can't be used to reset an admin password around the phishing-resistant requirement. Admins now reset each other; there are two Global Admins.
+3. **Report-only results for the last 7 days:** 80% Success, 20% Not applied, no Failure or User action required.
+4. **CA005 On.** A fresh admin@ sign-in was offered only "Face, fingerprint, PIN or security key", with no Authenticator option at all, and the sign-in log shows CA005 Success on the enforced Conditional Access tab.
+5. **CA003 Off**, not deleted. CA005 covers the same roles with a stronger requirement, so it can be switched back if CA005 ever has to be rolled back.
+
+![CA005 enforced: admin offered only a passkey, sign-in log shows CA005 Success](screenshots/ca005-enforced.png)
 
 **Why SMS is weak and passkeys aren't (NIST SP 800-63B):** SMS codes travel over the carrier network, so they can be stolen with a SIM swap or tricked out of the user by a fake login page. NIST SP 800-63B classifies SMS as a restricted authenticator: if an organization keeps it, it must offer an alternative and accept the risk. A passkey is a key pair: the private key stays on the user's device, and the website keeps the public key to verify its signatures. The passkey is tied to the real website's domain and the browser checks it, so a fake login page can't use it even if the user is fooled. In my lab, I issued Temporary Access Passes so users could register passkeys, confirmed SMS was disabled, and required phishing-resistant MFA for admins in a report-only Conditional Access policy.
 
@@ -488,6 +496,7 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - Pilot user's sign-in method choices after a Temporary Access Pass sign-in (no phone option): `screenshots/pilot-user-add-method.png`
 - Admin can store a phone, user can't use it: `screenshots/sms-admin-vs-user.png`
 - CA005 for Ethan, User action required vs Success: `screenshots/ca005-before-after-ethan.png`
+- CA005 enforced: admin offered only a passkey, CA005 Success in the sign-in log: `screenshots/ca005-enforced.png`
 
 **SSO protocols (Step 10)**
 - OIDC ID token decoded and labeled: `screenshots/oidc-id-token-labeled.png`
@@ -541,9 +550,9 @@ Tenant ID, tenant domain, personal email, TAP codes and temporary passwords are 
 - [x] Scope passkeys to a pilot group, onboard users with TAP, require phishing-resistant MFA for admins (report-only)
 - [x] Remove Global Administrator from the personal Microsoft account
 - [x] Switch CA002 to CA004 On after 5 days in report-only (Oct 29)
-- [ ] Switch CA005 On, then retire CA003
-- [ ] Widen Passkey (FIDO2) to All users before CA005 is On
-- [ ] Turn off self-service password reset for admins (Graph authorization policy allowedToUseSSPR) and test on Ethan
+- [x] Switch CA005 On, then retire CA003 (Nov 19)
+- [x] Widen Passkey (FIDO2) to All users before CA005 is On (Nov 19)
+- [x] Turn off self-service password reset for admins (Graph authorization policy allowedToUseSSPR) (Nov 19)
 - [ ] Passkey profile for admins: device-bound only with attestation enforced
 - [ ] Clean up stored phone numbers on accounts so they can't come back if SMS is re-enabled
 - [x] Block device code flow with Conditional Access and test before and after (CA007, Nov 12)

@@ -1,8 +1,8 @@
 {
   "displayName": "CA005-Require-PhishResistant-Admins",
   "createdDateTime": "2026-10-25T00:59:45.9288051Z",
-  "modifiedDateTime": "2026-10-25T15:40:21.9594153Z",
-  "state": "enabledForReportingButNotEnforced",
+  "modifiedDateTime": "2026-11-20T02:02:31.385686Z",
+  "state": "enabled",
   "deletedDateTime": null,
   "sessionControls": null,
   "conditions": {

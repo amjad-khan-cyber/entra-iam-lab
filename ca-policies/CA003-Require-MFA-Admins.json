@@ -1,8 +1,8 @@
 {
   "displayName": "CA003-Require-MFA-Admins",
   "createdDateTime": "2026-10-24T16:50:09.3315048Z",
-  "modifiedDateTime": "2026-10-29T23:19:14.5754829Z",
-  "state": "enabled",
+  "modifiedDateTime": "2026-11-20T02:20:13.4957409Z",
+  "state": "disabled",
   "deletedDateTime": null,
   "sessionControls": null,
   "conditions": {
